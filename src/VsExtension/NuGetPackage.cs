@@ -749,7 +749,6 @@ namespace NuGetVSExtension
 
         private IVsWindowFrame CreateDocWindowForSolution()
         {
-            // TODO: Need to wait until solution is loaded
             IVsWindowFrame windowFrame = null;
             IVsSolution solution = ServiceLocator.GetInstance<IVsSolution>();
             IVsUIShell uiShell = (IVsUIShell)GetService(typeof(SVsUIShell));
@@ -761,9 +760,10 @@ namespace NuGetVSExtension
             var projects = solutionManager.GetNuGetProjects();
             if (!projects.Any())
             {
-                // there are no supported projects.
-                // TODO: MessageHelper.ShowWarningMessage(
-                //    Resx.NoSupportedProjectsInSolution, Resources.ErrorDialogBoxTitle);
+                // NOTE: The menu 'Manage NuGet Packages For Solution' will be disabled in this case.
+                // But, it is possible, that, before NuGetPackage is loaded in VS, the menu is enabled and used.
+                // For once, this message will be shown. Once the package is loaded, the menu will get disabled as appropriate
+                MessageHelper.ShowWarningMessage(Resources.NoSupportedProjectsInSolution, Resources.ErrorDialogBoxTitle);
                 return null;
             }
 
@@ -909,8 +909,9 @@ namespace NuGetVSExtension
 
                 // Enable the 'Manage NuGet Packages For Solution' dialog menu
                 // a) if the console is NOT busy executing a command, AND
-                // b) if the solution exists and not debugging and not building
-                command.Enabled = !ConsoleStatus.IsBusy && IsSolutionExistsAndNotDebuggingAndNotBuilding();
+                // b) if the solution exists and not debugging and not building AND
+                // c) if there are no NuGetProjects. This means that there no loaded, supported projects
+                command.Enabled = !ConsoleStatus.IsBusy && IsSolutionExistsAndNotDebuggingAndNotBuilding() && SolutionManager.GetNuGetProjects().Any();
             });
         }
 
