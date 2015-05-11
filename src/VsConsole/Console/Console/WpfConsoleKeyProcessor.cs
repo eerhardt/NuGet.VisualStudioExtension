@@ -37,7 +37,7 @@ namespace NuGetConsole.Implementation.Console
         private int TabExpansionTimeout { get; }
 
         public WpfConsoleKeyProcessor(WpfConsole wpfConsole)
-            : base(wpfConsole.VsTextView)
+            : base(wpfConsole.VsTextViewInstance)
         {
             WpfConsole = wpfConsole;
             WpfTextView = wpfConsole.WpfTextView;

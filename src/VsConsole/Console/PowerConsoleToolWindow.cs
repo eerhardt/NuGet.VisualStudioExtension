@@ -575,6 +575,8 @@ namespace NuGetConsole.Implementation
 
         public bool Execute(string command, object[] inputs)
         {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
             if (ConsoleStatus.IsBusy)
             {
                 VSOutputConsole.WriteLine(Resources.PackageManagerConsoleBusy);

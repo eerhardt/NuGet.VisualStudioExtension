@@ -384,13 +384,9 @@ namespace NuGetConsole.Implementation.Console
         private class AsyncHostConsoleDispatcher : Dispatcher
         {
             private Queue<InputLine> _buffer;
-            private readonly Marshaler _marshaler;
 
             public AsyncHostConsoleDispatcher(ConsoleDispatcher parentDispatcher)
-                : base(parentDispatcher)
-            {
-                _marshaler = new Marshaler(this);
-            }
+                : base(parentDispatcher) { }
 
             private bool IsStarted
             {
@@ -413,7 +409,7 @@ namespace NuGetConsole.Implementation.Console
                     throw new InvalidOperationException();
                 }
 
-                asyncHost.ExecuteEnd += _marshaler.AsyncHost_ExecuteEnd;
+                asyncHost.ExecuteEnd += AsyncHost_ExecuteEnd;
                 PromptNewLine();
             }
 
@@ -466,21 +462,15 @@ namespace NuGetConsole.Implementation.Console
                 }
             }
 
-            /// <summary>
-            /// This private Marshaler marshals async host event to main thread so that the dispatcher
-            /// doesn't need to worry about threading.
-            /// </summary>
-            private class Marshaler : Marshaler<AsyncHostConsoleDispatcher>
+            private void AsyncHost_ExecuteEnd(object sender, EventArgs e)
             {
-                public Marshaler(AsyncHostConsoleDispatcher impl)
-                    : base(impl)
+                // This event will be raised from the pipeline execution thread
+                // upon completion of the invoked command
+                ThreadHelper.JoinableTaskFactory.Run(async delegate
                 {
-                }
-
-                public void AsyncHost_ExecuteEnd(object sender, EventArgs e)
-                {
-                    Invoke(() => _impl.OnExecuteEnd());
-                }
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    OnExecuteEnd();
+                });
             }
         }
 

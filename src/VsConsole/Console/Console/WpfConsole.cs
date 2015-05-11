@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Windows.Media;
+using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
@@ -29,7 +30,7 @@ namespace NuGetConsole.Implementation.Console
         "Microsoft.Maintainability",
         "CA1506:AvoidExcessiveClassCoupling",
         Justification = "We don't have resources to refactor this class.")]
-    internal class WpfConsole : ObjectWithFactory<WpfConsoleService>, IDisposable
+    internal class WpfConsole : ObjectWithFactory<WpfConsoleService>, IPrivateWpfConsole, IDisposable
     {
         private readonly IPrivateConsoleStatus _consoleStatus;
         private IVsTextBuffer _bufferAdapter;
@@ -41,7 +42,6 @@ namespace NuGetConsole.Implementation.Console
         private IHost _host;
         private InputHistory _inputHistory;
         private SnapshotPoint? _inputLineStart;
-        private PrivateMarshaler _marshaler;
         private uint _pdwCookieForStatusBar;
         private IReadOnlyRegion _readOnlyRegionBegin;
         private IReadOnlyRegion _readOnlyRegionBody;
@@ -71,15 +71,28 @@ namespace NuGetConsole.Implementation.Console
         public string ContentTypeName { get; private set; }
         public string HostName { get; private set; }
 
-        public IPrivateConsoleDispatcher Dispatcher
+        public IConsoleDispatcher Dispatcher
         {
             get
             {
-                if (_dispatcher == null)
+                return PrivateDispatcher;
+            }
+        }
+
+        public IPrivateConsoleDispatcher PrivateDispatcher
+        {
+            get
+            {
+                return ThreadHelper.JoinableTaskFactory.Run(async delegate
                 {
-                    _dispatcher = new ConsoleDispatcher(Marshaler);
-                }
-                return _dispatcher;
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+                    if (_dispatcher == null)
+                    {
+                        _dispatcher = new ConsoleDispatcher(this);
+                    }
+                    return _dispatcher;
+                });
             }
         }
 
@@ -177,15 +190,19 @@ namespace NuGetConsole.Implementation.Console
         {
             get
             {
-                if (_inputLineStart != null)
+                return ThreadHelper.JoinableTaskFactory.Run(async delegate
                 {
-                    ITextSnapshot snapshot = WpfTextView.TextSnapshot;
-                    if (_inputLineStart.Value.Snapshot != snapshot)
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    if (_inputLineStart != null)
                     {
-                        _inputLineStart = _inputLineStart.Value.TranslateTo(snapshot, PointTrackingMode.Negative);
+                        ITextSnapshot snapshot = WpfTextView.TextSnapshot;
+                        if (_inputLineStart.Value.Snapshot != snapshot)
+                        {
+                            _inputLineStart = _inputLineStart.Value.TranslateTo(snapshot, PointTrackingMode.Negative);
+                        }
                     }
-                }
-                return _inputLineStart;
+                    return _inputLineStart;
+                });
             }
         }
 
@@ -214,33 +231,34 @@ namespace NuGetConsole.Implementation.Console
             get { return InputLineExtent.GetText(); }
         }
 
-        private PrivateMarshaler Marshaler
-        {
-            get
-            {
-                if (_marshaler == null)
-                {
-                    _marshaler = new PrivateMarshaler(this);
-                }
-                return _marshaler;
-            }
-        }
-
         public IWpfConsole MarshaledConsole
         {
-            get { return this.Marshaler; }
+            get { return this.MarshaledConsole; }
         }
 
         public IHost Host
         {
-            get { return _host; }
+            get
+            {
+                return ThreadHelper.JoinableTaskFactory.Run(async delegate
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+                    return _host;
+                });
+            }
             set
             {
-                if (_host != null)
+                ThreadHelper.JoinableTaskFactory.Run(async delegate
                 {
-                    throw new InvalidOperationException();
-                }
-                _host = value;
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+                    if (_host != null)
+                    {
+                        throw new InvalidOperationException();
+                    }
+                    _host = value;
+                });
             }
         }
 
@@ -248,98 +266,126 @@ namespace NuGetConsole.Implementation.Console
         {
             get
             {
-                if (_consoleWidth < 0)
+                return ThreadHelper.JoinableTaskFactory.Run(async delegate
                 {
-                    ITextViewMargin leftMargin = WpfTextViewHost.GetTextViewMargin(PredefinedMarginNames.Left);
-                    ITextViewMargin rightMargin = WpfTextViewHost.GetTextViewMargin(PredefinedMarginNames.Right);
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-                    double marginSize = 0.0;
-                    if (leftMargin != null
-                        && leftMargin.Enabled)
+                    if (_consoleWidth < 0)
                     {
-                        marginSize += leftMargin.MarginSize;
-                    }
-                    if (rightMargin != null
-                        && rightMargin.Enabled)
-                    {
-                        marginSize += rightMargin.MarginSize;
-                    }
+                        ITextViewMargin leftMargin = WpfTextViewHost.GetTextViewMargin(PredefinedMarginNames.Left);
+                        ITextViewMargin rightMargin = WpfTextViewHost.GetTextViewMargin(PredefinedMarginNames.Right);
 
-                    var n = (int)((WpfTextView.ViewportWidth - marginSize) / WpfTextView.FormattedLineSource.ColumnWidth);
-                    _consoleWidth = Math.Max(80, n); // Larger of 80 or n
-                }
-                return _consoleWidth;
-            }
-        }
-
-        private InputHistory InputHistory
-        {
-            get
-            {
-                if (_inputHistory == null)
-                {
-                    _inputHistory = new InputHistory();
-                }
-                return _inputHistory;
-            }
-        }
-
-        public IVsTextView VsTextView
-        {
-            get
-            {
-                if (_view == null)
-                {
-                    var textViewRoleSet = Factory.TextEditorFactoryService.CreateTextViewRoleSet(
-                        PredefinedTextViewRoles.Interactive,
-                        PredefinedTextViewRoles.Editable,
-                        PredefinedTextViewRoles.Analyzable,
-                        PredefinedTextViewRoles.Zoomable);
-
-                    _view = Factory.VsEditorAdaptersFactoryService.CreateVsTextViewAdapter(OleServiceProvider, textViewRoleSet);
-                    _view.Initialize(
-                        VsTextBuffer as IVsTextLines,
-                        IntPtr.Zero,
-                        (uint)(TextViewInitFlags.VIF_HSCROLL | TextViewInitFlags.VIF_VSCROLL) |
-                        (uint)TextViewInitFlags3.VIF_NO_HWND_SUPPORT,
-                        null);
-
-                    // Set font and color
-                    var propCategoryContainer = _view as IVsTextEditorPropertyCategoryContainer;
-                    if (propCategoryContainer != null)
-                    {
-                        IVsTextEditorPropertyContainer propContainer;
-                        Guid guidPropCategory = EditorDefGuidList.guidEditPropCategoryViewMasterSettings;
-                        int hr = propCategoryContainer.GetPropertyCategory(ref guidPropCategory, out propContainer);
-                        if (hr == 0)
+                        double marginSize = 0.0;
+                        if (leftMargin != null
+                            && leftMargin.Enabled)
                         {
-                            propContainer.SetProperty(VSEDITPROPID.VSEDITPROPID_ViewGeneral_FontCategory,
-                                GuidList.guidPackageManagerConsoleFontAndColorCategory);
-                            propContainer.SetProperty(VSEDITPROPID.VSEDITPROPID_ViewGeneral_ColorCategory,
-                                GuidList.guidPackageManagerConsoleFontAndColorCategory);
+                            marginSize += leftMargin.MarginSize;
                         }
+                        if (rightMargin != null
+                            && rightMargin.Enabled)
+                        {
+                            marginSize += rightMargin.MarginSize;
+                        }
+
+                        var n = (int)((WpfTextView.ViewportWidth - marginSize) / WpfTextView.FormattedLineSource.ColumnWidth);
+                        _consoleWidth = Math.Max(80, n); // Larger of 80 or n
+                    }
+                    return _consoleWidth;
+                });
+            }
+        }
+
+        public InputHistory InputHistory
+        {
+            get
+            {
+                return ThreadHelper.JoinableTaskFactory.Run(async delegate
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+                    if (_inputHistory == null)
+                    {
+                        _inputHistory = new InputHistory();
+                    }
+                    return _inputHistory;
+                });
+            }
+        }
+
+        public object VsTextView
+        {
+            get
+            {
+                return ThreadHelper.JoinableTaskFactory.Run(async delegate
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+                    if (_view == null)
+                    {
+                        var textViewRoleSet = Factory.TextEditorFactoryService.CreateTextViewRoleSet(
+                            PredefinedTextViewRoles.Interactive,
+                            PredefinedTextViewRoles.Editable,
+                            PredefinedTextViewRoles.Analyzable,
+                            PredefinedTextViewRoles.Zoomable);
+
+                        _view = Factory.VsEditorAdaptersFactoryService.CreateVsTextViewAdapter(OleServiceProvider, textViewRoleSet);
+                        _view.Initialize(
+                            VsTextBuffer as IVsTextLines,
+                            IntPtr.Zero,
+                            (uint)(TextViewInitFlags.VIF_HSCROLL | TextViewInitFlags.VIF_VSCROLL) |
+                            (uint)TextViewInitFlags3.VIF_NO_HWND_SUPPORT,
+                            null);
+
+                        // Set font and color
+                        var propCategoryContainer = _view as IVsTextEditorPropertyCategoryContainer;
+                        if (propCategoryContainer != null)
+                        {
+                            IVsTextEditorPropertyContainer propContainer;
+                            Guid guidPropCategory = EditorDefGuidList.guidEditPropCategoryViewMasterSettings;
+                            int hr = propCategoryContainer.GetPropertyCategory(ref guidPropCategory, out propContainer);
+                            if (hr == 0)
+                            {
+                                propContainer.SetProperty(VSEDITPROPID.VSEDITPROPID_ViewGeneral_FontCategory,
+                                    GuidList.guidPackageManagerConsoleFontAndColorCategory);
+                                propContainer.SetProperty(VSEDITPROPID.VSEDITPROPID_ViewGeneral_ColorCategory,
+                                    GuidList.guidPackageManagerConsoleFontAndColorCategory);
+                            }
+                        }
+
+                        // add myself as IConsole
+                        WpfTextView.TextBuffer.Properties.AddProperty(typeof(IConsole), this);
+
+                        // Initial mark readonly region. Must call Start() to start accepting inputs.
+                        SetReadOnlyRegionType(ReadOnlyRegionType.All);
+
+                        // Set some EditorOptions: -DragDropEditing, +WordWrap
+                        IEditorOptions editorOptions = Factory.EditorOptionsFactoryService.GetOptions(WpfTextView);
+                        editorOptions.SetOptionValue(DefaultTextViewOptions.DragDropEditingId, false);
+                        editorOptions.SetOptionValue(DefaultTextViewOptions.WordWrapStyleId, WordWrapStyles.WordWrap);
+
+                        // Reset console width when needed
+                        WpfTextView.ViewportWidthChanged += (sender, e) => ResetConsoleWidth();
+                        WpfTextView.ZoomLevelChanged += (sender, e) => ResetConsoleWidth();
+
+                        // Create my Command Filter
+                        new WpfConsoleKeyProcessor(this);
                     }
 
-                    // add myself as IConsole
-                    WpfTextView.TextBuffer.Properties.AddProperty(typeof(IConsole), this);
+                    return _view;
+                });
+            }
+        }
 
-                    // Initial mark readonly region. Must call Start() to start accepting inputs.
-                    SetReadOnlyRegionType(ReadOnlyRegionType.All);
+        public IVsTextView VsTextViewInstance
+        {
+            get
+            {
+                return ThreadHelper.JoinableTaskFactory.Run(async delegate
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-                    // Set some EditorOptions: -DragDropEditing, +WordWrap
-                    IEditorOptions editorOptions = Factory.EditorOptionsFactoryService.GetOptions(WpfTextView);
-                    editorOptions.SetOptionValue(DefaultTextViewOptions.DragDropEditingId, false);
-                    editorOptions.SetOptionValue(DefaultTextViewOptions.WordWrapStyleId, WordWrapStyles.WordWrap);
-
-                    // Reset console width when needed
-                    WpfTextView.ViewportWidthChanged += (sender, e) => ResetConsoleWidth();
-                    WpfTextView.ZoomLevelChanged += (sender, e) => ResetConsoleWidth();
-
-                    // Create my Command Filter
-                    new WpfConsoleKeyProcessor(this);
-                }
-
-                return _view;
+                    return (IVsTextView)VsTextView;
+                });
             }
         }
 
@@ -415,43 +461,53 @@ namespace NuGetConsole.Implementation.Console
 
         public void BeginInputLine()
         {
-            if (!_startedWritingOutput)
+            ThreadHelper.JoinableTaskFactory.Run(async delegate
             {
-                return;
-            }
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-            if (_inputLineStart == null)
-            {
-                SetReadOnlyRegionType(ReadOnlyRegionType.BeginAndBody);
-                _inputLineStart = WpfTextView.TextSnapshot.GetEnd();
-            }
+                if (!_startedWritingOutput)
+                {
+                    return;
+                }
+
+                if (_inputLineStart == null)
+                {
+                    SetReadOnlyRegionType(ReadOnlyRegionType.BeginAndBody);
+                    _inputLineStart = WpfTextView.TextSnapshot.GetEnd();
+                }
+            });
         }
 
         public SnapshotSpan? EndInputLine(bool isEcho = false)
         {
-            if (!_startedWritingOutput)
+            return ThreadHelper.JoinableTaskFactory.Run<SnapshotSpan?>(async delegate
             {
-                return null;
-            }
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-            // Reset history navigation upon end of a command line
-            ResetNavigateHistory();
-
-            if (_inputLineStart != null)
-            {
-                SnapshotSpan inputSpan = InputLineExtent;
-
-                _inputLineStart = null;
-                SetReadOnlyRegionType(ReadOnlyRegionType.All);
-                if (!isEcho)
+                if (!_startedWritingOutput)
                 {
-                    Dispatcher.PostInputLine(new InputLine(inputSpan));
+                    return null;
                 }
 
-                return inputSpan;
-            }
+                // Reset history navigation upon end of a command line
+                ResetNavigateHistory();
 
-            return null;
+                if (_inputLineStart != null)
+                {
+                    SnapshotSpan inputSpan = InputLineExtent;
+
+                    _inputLineStart = null;
+                    SetReadOnlyRegionType(ReadOnlyRegionType.All);
+                    if (!isEcho)
+                    {
+                        Dispatcher.PostInputLine(new InputLine(inputSpan));
+                    }
+
+                    return inputSpan;
+                }
+
+                return null;
+            });
         }
 
         private void ResetConsoleWidth()
@@ -461,28 +517,33 @@ namespace NuGetConsole.Implementation.Console
 
         public void Write(string text)
         {
-            if (!_startedWritingOutput)
+            ThreadHelper.JoinableTaskFactory.Run(async delegate
             {
-                _outputCache.Add(Tuple.Create<string, Color?, Color?>(text, null, null));
-                return;
-            }
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-            if (_inputLineStart == null) // If not in input mode, need unlock to enable output
-            {
-                SetReadOnlyRegionType(ReadOnlyRegionType.None);
-            }
+                if (!_startedWritingOutput)
+                {
+                    _outputCache.Add(Tuple.Create<string, Color?, Color?>(text, null, null));
+                    return;
+                }
 
-            // Append text to editor buffer
-            ITextBuffer textBuffer = WpfTextView.TextBuffer;
-            textBuffer.Insert(textBuffer.CurrentSnapshot.Length, text);
+                if (_inputLineStart == null) // If not in input mode, need unlock to enable output
+                {
+                    SetReadOnlyRegionType(ReadOnlyRegionType.None);
+                }
 
-            // Ensure caret visible (scroll)
-            WpfTextView.Caret.EnsureVisible();
+                // Append text to editor buffer
+                ITextBuffer textBuffer = WpfTextView.TextBuffer;
+                textBuffer.Insert(textBuffer.CurrentSnapshot.Length, text);
 
-            if (_inputLineStart == null) // If not in input mode, need lock again
-            {
-                SetReadOnlyRegionType(ReadOnlyRegionType.All);
-            }
+                // Ensure caret visible (scroll)
+                WpfTextView.Caret.EnsureVisible();
+
+                if (_inputLineStart == null) // If not in input mode, need lock again
+                {
+                    SetReadOnlyRegionType(ReadOnlyRegionType.All);
+                }
+            });
         }
 
         public void WriteLine(string text)
@@ -493,51 +554,66 @@ namespace NuGetConsole.Implementation.Console
 
         public void WriteBackspace()
         {
-            if (_inputLineStart == null) // If not in input mode, need unlock to enable output
+            ThreadHelper.JoinableTaskFactory.Run(async delegate
             {
-                SetReadOnlyRegionType(ReadOnlyRegionType.None);
-            }
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-            // Delete last character from input buffer.
-            ITextBuffer textBuffer = WpfTextView.TextBuffer;
-            if (textBuffer.CurrentSnapshot.Length > 0)
-            {
-                textBuffer.Delete(new Span(textBuffer.CurrentSnapshot.Length - 1, 1));
-            }
+                if (_inputLineStart == null) // If not in input mode, need unlock to enable output
+                {
+                    SetReadOnlyRegionType(ReadOnlyRegionType.None);
+                }
 
-            // Ensure caret visible (scroll)
-            WpfTextView.Caret.EnsureVisible();
+                // Delete last character from input buffer.
+                ITextBuffer textBuffer = WpfTextView.TextBuffer;
+                if (textBuffer.CurrentSnapshot.Length > 0)
+                {
+                    textBuffer.Delete(new Span(textBuffer.CurrentSnapshot.Length - 1, 1));
+                }
 
-            if (_inputLineStart == null) // If not in input mode, need lock again
-            {
-                SetReadOnlyRegionType(ReadOnlyRegionType.All);
-            }
+                // Ensure caret visible (scroll)
+                WpfTextView.Caret.EnsureVisible();
+
+                if (_inputLineStart == null) // If not in input mode, need lock again
+                {
+                    SetReadOnlyRegionType(ReadOnlyRegionType.All);
+                }
+            });
         }
 
         public void Write(string text, Color? foreground, Color? background)
         {
-            if (!_startedWritingOutput)
+            ThreadHelper.JoinableTaskFactory.Run(async delegate
             {
-                _outputCache.Add(Tuple.Create(text, foreground, background));
-                return;
-            }
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-            int begin = WpfTextView.TextSnapshot.Length;
-            Write(text);
-            int end = WpfTextView.TextSnapshot.Length;
+                if (!_startedWritingOutput)
+                {
+                    _outputCache.Add(Tuple.Create(text, foreground, background));
+                    return;
+                }
 
-            if (foreground != null
-                || background != null)
-            {
-                var span = new SnapshotSpan(WpfTextView.TextSnapshot, begin, end - begin);
-                NewColorSpan.Raise(this, Tuple.Create(span, foreground, background));
-            }
+                int begin = WpfTextView.TextSnapshot.Length;
+                Write(text);
+                int end = WpfTextView.TextSnapshot.Length;
+
+                if (foreground != null
+                    || background != null)
+                {
+                    var span = new SnapshotSpan(WpfTextView.TextSnapshot, begin, end - begin);
+                    NewColorSpan.Raise(this, Tuple.Create(span, foreground, background));
+                }
+            });
         }
 
         public void StartWritingOutput()
         {
-            _startedWritingOutput = true;
-            FlushOutput();
+            ThreadHelper.JoinableTaskFactory.Run(async delegate
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+                _startedWritingOutput = true;
+                FlushOutput();
+            });
         }
 
         private void FlushOutput()
@@ -559,66 +635,78 @@ namespace NuGetConsole.Implementation.Console
 
         public void NavigateHistory(int offset)
         {
-            if (_historyInputs == null)
+            ThreadHelper.JoinableTaskFactory.Run(async delegate
             {
-                _historyInputs = InputHistory.History;
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
                 if (_historyInputs == null)
                 {
-                    _historyInputs = new string[] { };
+                    _historyInputs = InputHistory.History;
+                    if (_historyInputs == null)
+                    {
+                        _historyInputs = new string[] { };
+                    }
+
+                    _currentHistoryInputIndex = _historyInputs.Count;
                 }
 
-                _currentHistoryInputIndex = _historyInputs.Count;
-            }
+                int index = _currentHistoryInputIndex + offset;
+                if (index >= -1
+                    && index <= _historyInputs.Count)
+                {
+                    _currentHistoryInputIndex = index;
+                    string input = (index >= 0 && index < _historyInputs.Count)
+                        ? _historyInputs[_currentHistoryInputIndex]
+                        : string.Empty;
 
-            int index = _currentHistoryInputIndex + offset;
-            if (index >= -1
-                && index <= _historyInputs.Count)
-            {
-                _currentHistoryInputIndex = index;
-                string input = (index >= 0 && index < _historyInputs.Count)
-                    ? _historyInputs[_currentHistoryInputIndex]
-                    : string.Empty;
-
-                // Replace all text after InputLineStart with new text
-                WpfTextView.TextBuffer.Replace(AllInputExtent, input);
-                WpfTextView.Caret.EnsureVisible();
-            }
+                    // Replace all text after InputLineStart with new text
+                    WpfTextView.TextBuffer.Replace(AllInputExtent, input);
+                    WpfTextView.Caret.EnsureVisible();
+                }
+            });
         }
 
-        private void WriteProgress(string operation, int percentComplete)
+        public void WriteProgress(string operation, int percentComplete)
         {
-            if (operation == null)
+            ThreadHelper.JoinableTaskFactory.Run(async delegate
             {
-                throw new ArgumentNullException("operation");
-            }
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-            if (percentComplete < 0)
-            {
-                percentComplete = 0;
-            }
+                if (operation == null)
+                {
+                    throw new ArgumentNullException("operation");
+                }
 
-            if (percentComplete > 100)
-            {
-                percentComplete = 100;
-            }
+                if (percentComplete < 0)
+                {
+                    percentComplete = 0;
+                }
 
-            if (percentComplete == 100)
-            {
-                HideProgress();
-            }
-            else
-            {
-                VsStatusBar.Progress(
-                    ref _pdwCookieForStatusBar,
-                    1 /* in progress */,
-                    operation,
-                    (uint)percentComplete,
-                    (uint)100);
-            }
+                if (percentComplete > 100)
+                {
+                    percentComplete = 100;
+                }
+
+                if (percentComplete == 100)
+                {
+                    HideProgress();
+                }
+                else
+                {
+                    VsStatusBar.Progress(
+                        ref _pdwCookieForStatusBar,
+                        1 /* in progress */,
+                        operation,
+                        (uint)percentComplete,
+                        (uint)100);
+                }
+            });
         }
 
         private void HideProgress()
         {
+            Debug.Assert(ThreadHelper.CheckAccess());
+
             VsStatusBar.Progress(
                 ref _pdwCookieForStatusBar,
                 0 /* completed */,
@@ -629,42 +717,62 @@ namespace NuGetConsole.Implementation.Console
 
         public void SetExecutionMode(bool isExecuting)
         {
-            _consoleStatus.SetBusyState(isExecuting);
-
-            if (!isExecuting)
+            ThreadHelper.JoinableTaskFactory.Run(async delegate
             {
-                HideProgress();
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-                VsUIShell.UpdateCommandUI(0 /* false = update UI asynchronously */);
-            }
+                _consoleStatus.SetBusyState(isExecuting);
+
+                if (!isExecuting)
+                {
+                    HideProgress();
+
+                    VsUIShell.UpdateCommandUI(0 /* false = update UI asynchronously */);
+                }
+            });
         }
 
         public void Clear()
         {
-            if (!_startedWritingOutput)
+            ThreadHelper.JoinableTaskFactory.Run(async delegate
             {
-                _outputCache.Clear();
-                return;
-            }
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-            SetReadOnlyRegionType(ReadOnlyRegionType.None);
+                if (!_startedWritingOutput)
+                {
+                    _outputCache.Clear();
+                    return;
+                }
 
-            ITextBuffer textBuffer = WpfTextView.TextBuffer;
-            textBuffer.Delete(new Span(0, textBuffer.CurrentSnapshot.Length));
+                SetReadOnlyRegionType(ReadOnlyRegionType.None);
 
-            // Dispose existing incompleted input line
-            _inputLineStart = null;
+                ITextBuffer textBuffer = WpfTextView.TextBuffer;
+                textBuffer.Delete(new Span(0, textBuffer.CurrentSnapshot.Length));
 
-            // Raise event
-            ConsoleCleared.Raise(this);
+                // Dispose existing incompleted input line
+                _inputLineStart = null;
+
+                // Raise event
+                ConsoleCleared.Raise(this);
+            });
         }
 
         public void ClearConsole()
         {
-            if (_inputLineStart != null)
+            ThreadHelper.JoinableTaskFactory.Run(async delegate
             {
-                Dispatcher.ClearConsole();
-            }
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+                if (_inputLineStart != null)
+                {
+                    Dispatcher.ClearConsole();
+                }
+            });
+        }
+
+        public bool ShowDisclaimerHeader
+        {
+            get { return true; }
         }
 
         [SuppressMessage(
@@ -710,122 +818,6 @@ namespace NuGetConsole.Implementation.Console
         {
             Dispose(false);
         }
-
-        #region Nested type: PrivateMarshaler
-
-        private class PrivateMarshaler : Marshaler<WpfConsole>, IPrivateWpfConsole
-        {
-            public PrivateMarshaler(WpfConsole impl)
-                : base(impl)
-            {
-            }
-
-            #region IPrivateWpfConsole Members
-
-            public SnapshotPoint? InputLineStart
-            {
-                get { return Invoke(() => _impl.InputLineStart); }
-            }
-
-            public void BeginInputLine()
-            {
-                Invoke(() => _impl.BeginInputLine());
-            }
-
-            public SnapshotSpan? EndInputLine(bool isEcho)
-            {
-                return Invoke(() => _impl.EndInputLine(isEcho));
-            }
-
-            public InputHistory InputHistory
-            {
-                get { return Invoke(() => _impl.InputHistory); }
-            }
-
-            #endregion
-
-            #region IWpfConsole Members
-
-            public IHost Host
-            {
-                get { return Invoke(() => _impl.Host); }
-                set { Invoke(() => { _impl.Host = value; }); }
-            }
-
-            public IConsoleDispatcher Dispatcher
-            {
-                get { return Invoke(() => _impl.Dispatcher); }
-            }
-
-            public int ConsoleWidth
-            {
-                get { return Invoke(() => _impl.ConsoleWidth); }
-            }
-
-            public void Write(string text)
-            {
-                Invoke(() => _impl.Write(text));
-            }
-
-            public void WriteLine(string text)
-            {
-                Invoke(() => _impl.WriteLine(text));
-            }
-
-            public void WriteBackspace()
-            {
-                Invoke(_impl.WriteBackspace);
-            }
-
-            public void Write(string text, Color? foreground, Color? background)
-            {
-                Invoke(() => _impl.Write(text, foreground, background));
-            }
-
-            public void Clear()
-            {
-                Invoke(_impl.Clear);
-            }
-
-            public void SetExecutionMode(bool isExecuting)
-            {
-                Invoke(() => _impl.SetExecutionMode(isExecuting));
-            }
-
-            public object Content
-            {
-                get { return Invoke(() => _impl.Content); }
-            }
-
-            public void WriteProgress(string operation, int percentComplete)
-            {
-                Invoke(() => _impl.WriteProgress(operation, percentComplete));
-            }
-
-            public object VsTextView
-            {
-                get { return Invoke(() => _impl.VsTextView); }
-            }
-
-            public bool ShowDisclaimerHeader
-            {
-                get { return true; }
-            }
-
-            public void StartWritingOutput()
-            {
-                Invoke(_impl.StartWritingOutput);
-            }
-
-            #endregion
-
-            public void Dispose()
-            {
-                _impl.Dispose(disposing: true);
-            }
-        }
-
-        #endregion
 
         #region Nested type: ReadOnlyRegionType
 

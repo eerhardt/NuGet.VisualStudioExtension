@@ -4,6 +4,7 @@
 using System;
 using System.Diagnostics;
 using Microsoft.VisualStudio;
+using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 
 namespace NuGet.PackageManagement.VisualStudio
@@ -14,6 +15,8 @@ namespace NuGet.PackageManagement.VisualStudio
 
         public SettingsManagerWrapper(IServiceProvider serviceProvider)
         {
+            Debug.Assert(ThreadHelper.CheckAccess());
+
             _settingsManager = (IVsSettingsManager)serviceProvider.GetService(typeof(SVsSettingsManager));
             Debug.Assert(_settingsManager != null);
         }

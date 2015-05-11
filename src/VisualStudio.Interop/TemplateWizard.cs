@@ -4,6 +4,7 @@
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using System.ComponentModel.Composition.Hosting;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using EnvDTE;
 using Microsoft.VisualStudio.ComponentModelHost;
@@ -22,6 +23,8 @@ namespace NuGet.VisualStudio
 
         private void Initialize(object automationObject)
         {
+            Debug.Assert(ThreadHelper.CheckAccess());
+
             using (var serviceProvider = new ServiceProvider((IServiceProvider)automationObject))
             {
                 var componentModel = (IComponentModel)serviceProvider.GetService(typeof(SComponentModel));
@@ -55,7 +58,11 @@ namespace NuGet.VisualStudio
 
         void IWizard.RunStarted(object automationObject, Dictionary<string, string> replacementsDictionary, WizardRunKind runKind, object[] customParams)
         {
-            Initialize(automationObject);
+            ThreadHelper.JoinableTaskFactory.Run(async delegate
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                Initialize(automationObject);
+            });
 
             Wizard.RunStarted(automationObject, replacementsDictionary, runKind, customParams);
         }

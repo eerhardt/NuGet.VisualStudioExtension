@@ -277,6 +277,8 @@ namespace NuGetVSExtension
             // IMPORTANT: Do NOT do anything that can lead to a call to ServiceLocator.GetGlobalService().
             // Doing so is illegal and may cause VS to hang.
 
+            Debug.Assert(ThreadHelper.CheckAccess());
+
             _dte = (DTE)GetService(typeof(SDTE));
             Debug.Assert(_dte != null);
 
@@ -337,6 +339,8 @@ namespace NuGetVSExtension
 
         private void AddMenuCommandHandlers()
         {
+            Debug.Assert(ThreadHelper.CheckAccess());
+
             _mcs = GetService(typeof(IMenuCommandService)) as OleMenuCommandService;
             if (null != _mcs)
             {
@@ -393,6 +397,8 @@ namespace NuGetVSExtension
 
         private void ExecutePowerConsoleCommand(object sender, EventArgs e)
         {
+            Debug.Assert(ThreadHelper.CheckAccess());
+
             // Get the instance number 0 of this tool window. This window is single instance so this instance
             // is actually the only one.
             // The last flag is set to true so that if the tool window does not exists it will be created.
