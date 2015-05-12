@@ -884,18 +884,18 @@ namespace NuGetVSExtension
 
                 OleMenuCommand command = (OleMenuCommand)sender;
 
-                // Enable the 'Manage NuGet Packages' dialog menu
-                // a) if the console is NOT busy executing a command, AND
-                // b) if the solution exists and not debugging and not building AND
-                // c) if the active project is loaded and supported
-                command.Enabled = !ConsoleStatus.IsBusy && IsSolutionExistsAndNotDebuggingAndNotBuilding() && HasActiveLoadedSupportedProject;
-
                 // Keep the 'Manage NuGet Packages' visible, only if a solution is open. Following is why.
                 // When all menu commands in the 'Project' menu are invisible, when a solution is closed, Project menu goes away.
                 // This is actually true. All the menu commands under the 'Project Menu' do go away when no solution is open.
                 // If 'Manage NuGet Packages' is disabled but visible, 'Project' menu shows up just because 1 menu command is visible, even though, it is disabled
                 // So, make it invisible when no solution is open
                 command.Visible = SolutionManager.IsSolutionOpen;
+
+                // Enable the 'Manage NuGet Packages' dialog menu
+                // a) if the console is NOT busy executing a command, AND
+                // b) if the solution exists and not debugging and not building AND
+                // c) if the active project is loaded and supported
+                command.Enabled = !ConsoleStatus.IsBusy && IsSolutionExistsAndNotDebuggingAndNotBuilding() && HasActiveLoadedSupportedProject;
             });
         }
 

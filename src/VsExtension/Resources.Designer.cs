@@ -133,7 +133,7 @@ namespace NuGetVSExtension {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to No supported projects in the solution..
+        ///   Looks up a localized string similar to No projects supported by NuGet in the solution..
         /// </summary>
         internal static string NoSupportedProjectsInSolution {
             get {
