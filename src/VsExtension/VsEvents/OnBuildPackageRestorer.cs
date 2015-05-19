@@ -278,7 +278,7 @@ namespace NuGetVSExtension
                 return;
             }
 
-            var packagesInfo = await PackageRestoreManager.GetPackagesInSolutionAsync(solutionDirectory, CancellationToken.None);
+            var packages = await PackageRestoreManager.GetPackagesInSolutionAsync(solutionDirectory, CancellationToken.None);
 
             if (IsConsentGranted())
             {
@@ -286,13 +286,13 @@ namespace NuGetVSExtension
                 Canceled = false;
                 CurrentCount = 0;
 
-                if (!packagesInfo.Packages.Any())
+                if (!packages.Any())
                 {
                     // Restore is not applicable, since, there is no project with installed packages, that is, packages.config
                     return;
                 }
 
-                var missingPackagesList = packagesInfo.Packages.Where(p => p.IsMissing).ToList();
+                var missingPackagesList = packages.Where(p => p.IsMissing).ToList();
                 TotalCount = missingPackagesList.Count;
                 if (TotalCount > 0)
                 {
@@ -311,7 +311,7 @@ namespace NuGetVSExtension
                             Token = threadedWaitDialogSession.UserCancellationToken;
                             ThreadedWaitDialogProgress = threadedWaitDialogSession.Progress;
 
-                            await RestoreMissingPackagesInSolutionAsync(solutionDirectory, packagesInfo, Token);
+                            await RestoreMissingPackagesInSolutionAsync(solutionDirectory, packages, Token);
 
                             WriteLine(canceled: Canceled, hasMissingPackages: true, hasErrors: HasErrors);
                         }
@@ -332,7 +332,7 @@ namespace NuGetVSExtension
                     initialProgress: new ThreadedWaitDialogProgressData(Resources.RestoringPackages,
                         String.Empty, String.Empty, isCancelable: true, currentStep: 0, totalSteps: 0)))
                 {
-                    CheckForMissingPackages(packagesInfo.Packages);
+                    CheckForMissingPackages(packages);
                 }
             }
 
@@ -343,7 +343,7 @@ namespace NuGetVSExtension
         /// Checks if there are missing packages that should be restored. If so, a warning will
         /// be added to the error list.
         /// </summary>
-        private void CheckForMissingPackages(IEnumerable<PackageInfo> missingPackages)
+        private void CheckForMissingPackages(IEnumerable<PackageContextForRestore> missingPackages)
         {
             if (missingPackages.Any())
             {
@@ -355,12 +355,12 @@ namespace NuGetVSExtension
         }
 
         private async Task RestoreMissingPackagesInSolutionAsync(string solutionDirectory,
-            PackagesInfo packagesInfo,
+            IEnumerable<PackageContextForRestore> packages,
             CancellationToken token)
         {
             await TaskScheduler.Default;
 
-            await PackageRestoreManager.RestoreMissingPackagesAsync(solutionDirectory, packagesInfo, Token);
+            await PackageRestoreManager.RestoreMissingPackagesAsync(solutionDirectory, packages, Token);
         }
 
         /// <summary>
