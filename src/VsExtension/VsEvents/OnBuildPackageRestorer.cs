@@ -234,7 +234,7 @@ namespace NuGetVSExtension
                 return;
             }
 
-            if (args.PackageInfo.ProjectNames.Any())
+            if (args.ProjectNames.Any())
             {
                 // HasErrors will be used to show a message in the output window, that, Package restore failed
                 // If Canceled is not already set to true
@@ -244,7 +244,7 @@ namespace NuGetVSExtension
                         // Switch to main thread to update the error list window or output window
                         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-                        foreach (var projectName in args.PackageInfo.ProjectNames)
+                        foreach (var projectName in args.ProjectNames)
                         {
                             var exceptionMessage = _msBuildOutputVerbosity >= (int)VerbosityLevel.Detailed ?
                                 args.Exception.ToString() :
@@ -278,7 +278,7 @@ namespace NuGetVSExtension
                 return;
             }
 
-            var missingPackagesInfo = await PackageRestoreManager.GetMissingPackagesInSolutionAsync(solutionDirectory, CancellationToken.None);
+            var packagesInfo = await PackageRestoreManager.GetPackagesInSolutionAsync(solutionDirectory, CancellationToken.None);
 
             if (IsConsentGranted())
             {
@@ -286,13 +286,13 @@ namespace NuGetVSExtension
                 Canceled = false;
                 CurrentCount = 0;
 
-                if (!missingPackagesInfo.IsRestoreApplicable)
+                if (!packagesInfo.Packages.Any())
                 {
                     // Restore is not applicable, since, there is no project with installed packages, that is, packages.config
                     return;
                 }
 
-                var missingPackagesList = missingPackagesInfo.Packages.ToList();
+                var missingPackagesList = packagesInfo.Packages.Where(p => p.IsMissing).ToList();
                 TotalCount = missingPackagesList.Count;
                 if (TotalCount > 0)
                 {
@@ -311,7 +311,7 @@ namespace NuGetVSExtension
                             Token = threadedWaitDialogSession.UserCancellationToken;
                             ThreadedWaitDialogProgress = threadedWaitDialogSession.Progress;
 
-                            await RestoreMissingPackagesInSolutionAsync(solutionDirectory, missingPackagesInfo, Token);
+                            await RestoreMissingPackagesInSolutionAsync(solutionDirectory, packagesInfo, Token);
 
                             WriteLine(canceled: Canceled, hasMissingPackages: true, hasErrors: HasErrors);
                         }
@@ -332,7 +332,7 @@ namespace NuGetVSExtension
                     initialProgress: new ThreadedWaitDialogProgressData(Resources.RestoringPackages,
                         String.Empty, String.Empty, isCancelable: true, currentStep: 0, totalSteps: 0)))
                 {
-                    CheckForMissingPackages(missingPackagesInfo.Packages);
+                    CheckForMissingPackages(packagesInfo.Packages);
                 }
             }
 
@@ -343,7 +343,7 @@ namespace NuGetVSExtension
         /// Checks if there are missing packages that should be restored. If so, a warning will
         /// be added to the error list.
         /// </summary>
-        private void CheckForMissingPackages(IEnumerable<MissingPackageInfo> missingPackages)
+        private void CheckForMissingPackages(IEnumerable<PackageInfo> missingPackages)
         {
             if (missingPackages.Any())
             {
@@ -355,12 +355,12 @@ namespace NuGetVSExtension
         }
 
         private async Task RestoreMissingPackagesInSolutionAsync(string solutionDirectory,
-            MissingPackagesInfo missingPackagesInfo,
+            PackagesInfo packagesInfo,
             CancellationToken token)
         {
             await TaskScheduler.Default;
 
-            await PackageRestoreManager.RestoreMissingPackagesAsync(solutionDirectory, missingPackagesInfo, Token);
+            await PackageRestoreManager.RestoreMissingPackagesAsync(solutionDirectory, packagesInfo, Token);
         }
 
         /// <summary>
