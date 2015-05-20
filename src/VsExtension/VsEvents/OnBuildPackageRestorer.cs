@@ -343,7 +343,7 @@ namespace NuGetVSExtension
         /// Checks if there are missing packages that should be restored. If so, a warning will
         /// be added to the error list.
         /// </summary>
-        private void CheckForMissingPackages(IEnumerable<PackageContextForRestore> missingPackages)
+        private void CheckForMissingPackages(IEnumerable<PackageRestoreData> missingPackages)
         {
             if (missingPackages.Any())
             {
@@ -355,7 +355,7 @@ namespace NuGetVSExtension
         }
 
         private async Task RestoreMissingPackagesInSolutionAsync(string solutionDirectory,
-            IEnumerable<PackageContextForRestore> packages,
+            IEnumerable<PackageRestoreData> packages,
             CancellationToken token)
         {
             await TaskScheduler.Default;
