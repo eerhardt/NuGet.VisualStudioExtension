@@ -571,7 +571,7 @@ namespace NuGetVSExtension
             var solutionManager = ServiceLocator.GetInstance<ISolutionManager>();
             var nugetProject = solutionManager.GetNuGetProject(project.Name);
 
-            if(nugetProject == null)
+            if (nugetProject == null)
             {
                 throw new InvalidOperationException(Resources.SolutionIsNotSaved);
             }
@@ -874,11 +874,12 @@ namespace NuGetVSExtension
                 OleMenuCommand command = (OleMenuCommand)sender;
 
                 // Keep the 'Manage NuGet Packages' visible, only if a solution is open. Following is why.
-                // When all menu commands in the 'Project' menu are invisible, when a solution is closed, Project menu goes away.
-                // This is actually true. All the menu commands under the 'Project Menu' do go away when no solution is open.
-                // If 'Manage NuGet Packages' is disabled but visible, 'Project' menu shows up just because 1 menu command is visible, even though, it is disabled
-                // So, make it invisible when no solution is open
-                // Don't use SolutionManager.IsSolutionOpen for this, because, it will be false, when a solution is open, but not saved
+                // When all menu commands in the 'Project' menu are invisible, when a solution is closed,
+                // Project menu goes away. This is actually true. All the menu commands under the 'Project Menu'
+                // do go away when no solution is open. If 'Manage NuGet Packages' is disabled but visible,
+                // 'Project' menu shows up just because 1 menu command is visible, even though, it is disabled
+                // So, make it invisible when no solution is open. Don't use SolutionManager.IsSolutionOpen for this,
+                // because, it will be false, when a solution is open, but not saved
                 command.Visible = DoesSolutionExist();
 
                 // Enable the 'Manage NuGet Packages' dialog menu
