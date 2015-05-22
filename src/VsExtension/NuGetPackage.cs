@@ -1,3 +1,4 @@
+
 // Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
@@ -70,6 +71,7 @@ namespace NuGetVSExtension
 
         private static readonly string[] _visualizerSupportedSKUs = { "Premium", "Ultimate" };
 
+        private uint _solutionExistsContextCookie;
         private uint _solutionNotBuildingAndNotDebuggingContextCookie;
         private DTE _dte;
         private DTEEvents _dteEvents;
@@ -118,6 +120,10 @@ namespace NuGetVSExtension
                     // get the solution not building and not debugging cookie
                     Guid guid = VSConstants.UICONTEXT.SolutionExistsAndNotBuildingAndNotDebugging_guid;
                     _vsMonitorSelection.GetCmdUIContextCookie(ref guid, out _solutionNotBuildingAndNotDebuggingContextCookie);
+
+                    // get the solution exists cookie
+                    guid = VSConstants.UICONTEXT.SolutionExists_guid;
+                    _vsMonitorSelection.GetCmdUIContextCookie(ref guid, out _solutionExistsContextCookie);
                 }
                 return _vsMonitorSelection;
             }
@@ -564,6 +570,12 @@ namespace NuGetVSExtension
                 (uint)_VSRDTFLAGS.RDT_DontSaveAs;
 
             var solutionManager = ServiceLocator.GetInstance<ISolutionManager>();
+
+            if (!solutionManager.IsSolutionOpen)
+            {
+                throw new InvalidOperationException(Resources.SolutionIsNotSaved);
+            }
+
             var nugetProject = solutionManager.GetNuGetProject(project.Name);
 
             // load packages.config. This makes sure that an exception will get thrown if there
@@ -721,10 +733,9 @@ namespace NuGetVSExtension
             UserSettings settings;
             if (_nugetSettings.WindowSettings.TryGetValue(key, out settings))
             {
-                return settings ?? new UserSettings();
+                return settings;
             }
-			
-            return new UserSettings();
+            return null;
         }
 
         public void AddWindowSettings(string key, UserSettings obj)
@@ -742,6 +753,12 @@ namespace NuGetVSExtension
                 (uint)_VSRDTFLAGS.RDT_DontSaveAs;
 
             var solutionManager = ServiceLocator.GetInstance<ISolutionManager>();
+
+            if (solutionManager.IsSolutionOpen)
+            {
+                throw new InvalidOperationException(Resources.SolutionIsNotSaved);
+            }
+
             var projects = solutionManager.GetNuGetProjects();
             if (!projects.Any())
             {
@@ -865,17 +882,21 @@ namespace NuGetVSExtension
                 OleMenuCommand command = (OleMenuCommand)sender;
 
                 // Keep the 'Manage NuGet Packages' visible, only if a solution is open. Following is why.
-                // When all menu commands in the 'Project' menu are invisible, when a solution is closed, Project menu goes away.
-                // This is actually true. All the menu commands under the 'Project Menu' do go away when no solution is open.
-                // If 'Manage NuGet Packages' is disabled but visible, 'Project' menu shows up just because 1 menu command is visible, even though, it is disabled
-                // So, make it invisible when no solution is open
-                command.Visible = SolutionManager.IsSolutionOpen;
+                // When all menu commands in the 'Project' menu are invisible, when a solution is closed,
+                // Project menu goes away. This is actually true. All the menu commands under the 'Project Menu'
+                // do go away when no solution is open. If 'Manage NuGet Packages' is disabled but visible,
+                // 'Project' menu shows up just because 1 menu command is visible, even though, it is disabled
+                // So, make it invisible when no solution is open. Don't use SolutionManager.IsSolutionOpen for this,
+                // because, it will be false, when a solution is open, but not saved
+                command.Visible = DoesSolutionExist();
 
                 // Enable the 'Manage NuGet Packages' dialog menu
                 // a) if the console is NOT busy executing a command, AND
                 // b) if the solution exists and not debugging and not building AND
                 // c) if the active project is loaded and supported
-                command.Enabled = !ConsoleStatus.IsBusy && IsSolutionExistsAndNotDebuggingAndNotBuilding() && HasActiveLoadedSupportedProject;
+                command.Enabled = !ConsoleStatus.IsBusy
+                && IsSolutionExistsAndNotDebuggingAndNotBuilding()
+                && HasActiveLoadedSupportedProject;
             });
         }
 
@@ -893,6 +914,13 @@ namespace NuGetVSExtension
                 // c) if there are no NuGetProjects. This means that there no loaded, supported projects
                 command.Enabled = !ConsoleStatus.IsBusy && IsSolutionExistsAndNotDebuggingAndNotBuilding() && SolutionManager.GetNuGetProjects().Any();
             });
+        }
+
+        private bool DoesSolutionExist()
+        {
+            int pfActive;
+            int result = VsMonitorSelection.IsCmdUIContextActive(_solutionExistsContextCookie, out pfActive);
+            return (result == VSConstants.S_OK && pfActive > 0);
         }
 
         private bool IsSolutionExistsAndNotDebuggingAndNotBuilding()

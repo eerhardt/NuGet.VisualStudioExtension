@@ -478,6 +478,12 @@ namespace NuGet.PackageManagement.VisualStudio
                             }
                         });
                 }
+
+                // Ensure that the cache is initialized as well
+                // It is possible that the solution was open but not saved, at the point when,
+                // SolutionExistsAndFullyLoaded cookie kicks in. In other words, OnSolutionOpened is raised
+                // So, if init is called after the user has saved the solution, we populate the cache
+                EnsureNuGetAndEnvDTEProjectCache();
             }
             catch (Exception ex)
             {
