@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Xml.Linq;
 using NuGet.ProjectManagement;
 
@@ -50,55 +51,57 @@ namespace NuGet.PackageManagement.VisualStudio
                 return;
             }
 
-            // Get the configuration file
-            XDocument document = GetConfiguration();
-
-            // Get the runtime element
-            XElement runtime = document.Root.Element("runtime");
-
-            if (runtime == null)
-            {
-                // Add the runtime element to the configuration document
-                runtime = new XElement("runtime");
-                document.Root.AddIndented(runtime);
-            }
-
-            // Get all of the current bindings in config
-            ILookup<AssemblyBinding, XElement> currentBindings = GetAssemblyBindings(document);
-
-            XElement assemblyBindingElement = null;
-            foreach (var bindingRedirect in bindingRedirects)
-            {
-                // Look to see if we already have this in the list of bindings already in config.
-                if (currentBindings.Contains(bindingRedirect))
+            WriteToXmlFile(
+                Path.Combine(MSBuildNuGetProjectSystem.ProjectFullPath, ConfigurationFile),
+                document =>
                 {
-                    var existingBindings = currentBindings[bindingRedirect];
-                    if (existingBindings.Any())
+                    // Get the runtime element
+                    XElement runtime = document.Root.Element("runtime");
+
+                    if (runtime == null)
                     {
-                        // Remove all but the first assembly binding elements
-                        foreach (var bindingElement in existingBindings.Skip(1))
+                        // Add the runtime element to the configuration document
+                        runtime = new XElement("runtime");
+                        document.Root.AddIndented(runtime);
+                    }
+
+                    // Get all of the current bindings in config
+                    ILookup<AssemblyBinding, XElement> currentBindings = GetAssemblyBindings(document);
+
+                    XElement assemblyBindingElement = null;
+                    foreach (var bindingRedirect in bindingRedirects)
+                    {
+                        // Look to see if we already have this in the list of bindings already in config.
+                        if (currentBindings.Contains(bindingRedirect))
                         {
-                            RemoveElement(bindingElement);
+                            var existingBindings = currentBindings[bindingRedirect];
+                            if (existingBindings.Any())
+                            {
+                                // Remove all but the first assembly binding elements
+                                foreach (var bindingElement in existingBindings.Skip(1))
+                                {
+                                    RemoveElement(bindingElement);
+                                }
+
+                                UpdateBindingRedirectElement(existingBindings.First(), bindingRedirect);
+                                // Since we have a binding element, the assembly binding node (parent node) must exist. We don't need to do anything more here.
+                                continue;
+                            }
                         }
 
-                        UpdateBindingRedirectElement(existingBindings.First(), bindingRedirect);
-                        // Since we have a binding element, the assembly binding node (parent node) must exist. We don't need to do anything more here.
-                        continue;
+                        if (assemblyBindingElement == null)
+                        {
+                            // Get an assembly binding element to use
+                            assemblyBindingElement = GetAssemblyBindingElement(runtime);
+                        }
+                        // Add the binding to that element
+
+                        assemblyBindingElement.AddIndented(bindingRedirect.ToXElement());
                     }
-                }
+                });
 
-                if (assemblyBindingElement == null)
-                {
-                    // Get an assembly binding element to use
-                    assemblyBindingElement = GetAssemblyBindingElement(runtime);
-                }
-                // Add the binding to that element
-
-                assemblyBindingElement.AddIndented(bindingRedirect.ToXElement());
-            }
-
-            // Save the file
-            Save(document);
+            // Ensure the file is added to the project
+            MSBuildNuGetProjectSystem.AddExistingFile(ConfigurationFile);
         }
 
         public void RemoveBindingRedirects(IEnumerable<AssemblyBinding> bindingRedirects)
@@ -114,30 +117,62 @@ namespace NuGet.PackageManagement.VisualStudio
                 return;
             }
 
-            // Get the configuration file
-            XDocument document = GetConfiguration();
-
-            // Get all of the current bindings in config
-            ILookup<AssemblyBinding, XElement> currentBindings = GetAssemblyBindings(document);
-
-            if (!currentBindings.Any())
-            {
-                return;
-            }
-
-            foreach (var bindingRedirect in bindingRedirects)
-            {
-                if (currentBindings.Contains(bindingRedirect))
+            WriteToXmlFile(
+                Path.Combine(MSBuildNuGetProjectSystem.ProjectFullPath, ConfigurationFile),
+                document =>
                 {
-                    foreach (var bindingElement in currentBindings[bindingRedirect])
+                    // Get all of the current bindings in config
+                    ILookup<AssemblyBinding, XElement> currentBindings = GetAssemblyBindings(document);
+
+                    if (!currentBindings.Any())
                     {
-                        RemoveElement(bindingElement);
+                        return;
                     }
+
+                    foreach (var bindingRedirect in bindingRedirects)
+                    {
+                        if (currentBindings.Contains(bindingRedirect))
+                        {
+                            foreach (var bindingElement in currentBindings[bindingRedirect])
+                            {
+                                RemoveElement(bindingElement);
+                            }
+                        }
+                    }
+                });
+        }
+
+        private static void WriteToXmlFile(string fileName, Action<XDocument> performWrite)
+        {
+            var serviceProvider = ServiceLocator.GetInstance<IServiceProvider>();
+            using (var file = BufferedTextFile.CreateBufferedTextFile(serviceProvider, fileName))
+            {
+                var buffer = file.GetTextBuffer(ensureWritable: true);
+                using (var edit = buffer.CreateEdit())
+                {
+                    var currentText = buffer.CurrentSnapshot.GetText();
+                    var document = XDocument.Parse(currentText);
+
+                    performWrite(document);
+
+                    edit.Replace(0, currentText.Length, GetStringContents(document));
+                    edit.Apply();
                 }
+
+                file.SaveIfDirty();
+            }
+        }
+
+        private static string GetStringContents(XDocument document)
+        {
+            var stringBuilder = new StringBuilder();
+            using (var writer = new CustomEncodingStringWriter(stringBuilder, document.Declaration?.Encoding))
+            {
+                document.Save(writer);
+                writer.Flush();
             }
 
-            // Save the file
-            Save(document);
+            return stringBuilder.ToString();
         }
 
         private static void RemoveElement(XElement element)
@@ -169,16 +204,6 @@ namespace NuGet.PackageManagement.VisualStudio
             return assemblyBinding;
         }
 
-        private void Save(XDocument document)
-        {
-            using (var memoryStream = new MemoryStream())
-            {
-                document.Save(memoryStream);
-                memoryStream.Seek(0, SeekOrigin.Begin);
-                MSBuildNuGetProjectSystem.AddFile(ConfigurationFile, memoryStream);
-            }
-        }
-
         private static ILookup<AssemblyBinding, XElement> GetAssemblyBindings(XDocument document)
         {
             XElement runtime = document.Root.Element("runtime");
@@ -191,11 +216,11 @@ namespace NuGet.PackageManagement.VisualStudio
 
             // We're going to need to know which element is associated with what binding for removal
             var assemblyElementPairs = from dependentAssemblyElement in assemblyBindingElements
-                select new
-                    {
-                        Binding = AssemblyBinding.Parse(dependentAssemblyElement),
-                        Element = dependentAssemblyElement
-                    };
+                                       select new
+                                       {
+                                           Binding = AssemblyBinding.Parse(dependentAssemblyElement),
+                                           Element = dependentAssemblyElement
+                                       };
 
             // Return a mapping from binding to element
             return assemblyElementPairs.ToLookup(p => p.Binding, p => p.Element);
@@ -207,11 +232,6 @@ namespace NuGet.PackageManagement.VisualStudio
                 .Elements(DependentAssemblyName);
         }
 
-        private XDocument GetConfiguration()
-        {
-            return ProjectManagement.XmlUtility.GetOrCreateDocument("configuration", MSBuildNuGetProjectSystem.ProjectFullPath, ConfigurationFile, MSBuildNuGetProjectSystem.NuGetProjectContext);
-        }
-
         private static void UpdateBindingRedirectElement(XElement element, AssemblyBinding bindingRedirect)
         {
             var bindingRedirectElement = element.Element(AssemblyBinding.GetQualifiedName("bindingRedirect"));
@@ -219,6 +239,31 @@ namespace NuGet.PackageManagement.VisualStudio
             Debug.Assert(bindingRedirectElement != null);
             bindingRedirectElement.Attribute("oldVersion").SetValue(bindingRedirect.OldVersion);
             bindingRedirectElement.Attribute("newVersion").SetValue(bindingRedirect.NewVersion);
+        }
+
+        private class CustomEncodingStringWriter : StringWriter
+        {
+            private Encoding _encoding;
+
+            public CustomEncodingStringWriter(StringBuilder stringBuilder, string encodingWebName)
+                : base(stringBuilder)
+            {
+                _encoding = Encoding.UTF8;
+
+                if (encodingWebName != null)
+                {
+                    try
+                    {
+                        _encoding = Encoding.GetEncoding(encodingWebName);
+                    }
+                    catch (ArgumentException)
+                    {
+                        // In case of an invalid encoding name, use UTF-8.
+                    }
+                }
+            }
+
+            public override Encoding Encoding { get { return _encoding; } }
         }
     }
 }

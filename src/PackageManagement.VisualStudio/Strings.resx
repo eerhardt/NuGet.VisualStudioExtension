@@ -171,4 +171,11 @@
   <data name="UninstallingPackage" xml:space="preserve">
     <value>Uninstalling NuGet package {0}.</value>
   </data>
+  <data name="Error_GetTextBuffer_2args" xml:space="preserve">
+    <value>Unable to open the file '{0}'. {1}</value>
+    <comment>0=filename, 1=exception</comment>
+  </data>
+  <data name="Error_OpenInIncompatibleBuffer_1arg" xml:space="preserve">
+    <value>The file '{0}' is already open in an incompatible editor. Try closing the editor first.</value>
+  </data>
 </root>

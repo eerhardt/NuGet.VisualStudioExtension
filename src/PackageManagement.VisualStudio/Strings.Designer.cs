@@ -142,6 +142,24 @@ namespace NuGet.PackageManagement.VisualStudio {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to Unable to open the file &apos;{0}&apos;. {1}.
+        /// </summary>
+        public static string Error_GetTextBuffer_2args {
+            get {
+                return ResourceManager.GetString("Error_GetTextBuffer_2args", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to The file &apos;{0}&apos; is already open in an incompatible editor. Try closing the editor first..
+        /// </summary>
+        public static string Error_OpenInIncompatibleBuffer_1arg {
+            get {
+                return ResourceManager.GetString("Error_OpenInIncompatibleBuffer_1arg", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Failed to add reference to &apos;{0}&apos;. Please make sure that it is in the Global Assembly Cache..
         /// </summary>
         public static string FailedToAddGacReference {
